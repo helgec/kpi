@@ -102,7 +102,7 @@ def get_kpi_metrics():
                 continue
 
             jae_m12 = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
-            latest_tid_jae = jae_tid_var["values"][-1]
+            latest_tid_jae = tid_var["values"][-1]
 
             q_jae = {
                 "query": [
