@@ -6,7 +6,9 @@ import urllib.request
 import urllib.error
 import xml.etree.ElementTree as ET
 
-STATE_FILE = "last_seen_kpi.txt"
+# Sikrer at tilstandsfilen lagres i samme mappe som selve skriptet
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+STATE_FILE = os.path.join(SCRIPT_DIR, "last_seen_kpi.txt")
 RSS_URL = "https://www.ssb.no/rss/kpi"
 
 def fetch_json(url, data=None):
@@ -25,22 +27,12 @@ def fetch_json(url, data=None):
         print(f"❌ HTTP Error {e.code} for URL {url}:\n{err_body}")
         raise
 
-def find_exact_code(var, primary_term, fallback_terms=[]):
-    """Søker presist etter den spesifikke serien for å unngå å forveksle KPI-JE og KPI-JAE."""
-    values = var.get("values", [])
-    texts = var.get("valueTexts", [])
-    
-    # 1. Prøv primærsøkeordet først (f.eks. 'kpi-jae')
-    for val, text in zip(values, texts):
-        if primary_term.lower() in text.lower():
-            return val
-            
-    # 2. Fallback dersom kodenavnet er skrevet annerledes
-    for val, text in zip(values, texts):
+def find_code(var, search_terms):
+    """Søker i valueTexts for en variabel og returnerer koden som matcher søkeordene."""
+    for val, text in zip(var.get("values", []), var.get("valueTexts", [])):
         text_lower = text.lower()
-        if any(term.lower() in text_lower for term in fallback_terms):
+        if any(term in text_lower for term in search_terms):
             return val
-            
     return None
 
 def fmt_num(val):
@@ -52,14 +44,14 @@ def fmt_num(val):
     return str(val).replace('.', ',')
 
 def get_kpi_metrics():
-    """Henter XX (KPI total), ZZ (Matvarer) og YY (KPI-JAE) presist fra SSBs nye tabeller."""
+    """Henter XX (KPI total), ZZ (Matvarer) og YY (KPI-JAE) fra tabeller."""
     xx, zz, yy, latest_tid = None, None, None, None
     
-    # 1. Hent XX (Total) og ZZ (Matvarer) fra Tabell 14700
+    # 1. Hent XX (Total) og ZZ (Matvarer) fra Tabell 14700 (erstatter 08183)
     tables_main = ["14700", "08183"]
     for table_id in tables_main:
         try:
-            print(f"🔍 Henter KPI Total og Matvarer fra tabell {table_id}...")
+            print(f"🔍 Prøver tabell {table_id} for KPI Total og Matvarer...")
             meta = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
             vars_list = meta["variables"]
             
@@ -67,9 +59,9 @@ def get_kpi_metrics():
             tid_var = next(v for v in vars_list if v["code"] == "Tid")
             grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
-            total_code = find_exact_code(grp_var, "00 i alt", ["totalindeks", "total"]) or grp_var["values"][0]
-            mat_code = find_exact_code(grp_var, "01 matvarer", ["matvarer"]) or grp_var["values"][1]
-            m12_code = find_exact_code(cnt_var, "12-måned", ["tolv", "12 mnd"]) or cnt_var["values"][-1]
+            total_code = find_code(grp_var, ["00 i alt", "i alt", "total"]) or grp_var["values"][0]
+            mat_code = find_code(grp_var, ["01 matvarer", "matvarer"]) or grp_var["values"][1]
+            m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
             latest_tid = tid_var["values"][-1]
             
             q = {
@@ -84,18 +76,18 @@ def get_kpi_metrics():
             res = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}", q)
             vals = res.get("value", [])
             if len(vals) >= 2:
-                xx = vals[0]
-                zz = vals[1]
-                print(f"✅ Hentet XX (Total) = {xx}% og ZZ (Matvarer) = {zz}% ({latest_tid})")
+                xx = vals[0]  # Total
+                zz = vals[1]  # Matvarer
+                print(f"✅ Hentet XX={xx} og ZZ={zz} fra tabell {table_id} ({latest_tid})")
                 break
         except Exception as e:
             print(f"⚠️ Kunne ikke hente fra tabell {table_id}: {e}")
 
-    # 2. Hent YY (Eksakt KPI-JAE) fra Tabell 14706
+    # 2. Hent YY (KPI-JAE) fra Tabell 14706 / 14708 / 14704 / 08184
     tables_jae = ["14706", "14708", "14704", "08184"]
     for table_id in tables_jae:
         try:
-            print(f"🔍 Henter presis KPI-JAE fra tabell {table_id}...")
+            print(f"🔍 Prøver tabell {table_id} for KPI-JAE...")
             meta = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
             vars_list = meta["variables"]
             
@@ -103,12 +95,12 @@ def get_kpi_metrics():
             jae_tid_var = next(v for v in vars_list if v["code"] == "Tid")
             jae_grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
-            # KREVER eksakt treff på 'kpi-jae' for å unngå KPI-JE (uten energivarer)
-            jae_code = find_exact_code(jae_grp_var, "kpi-jae", ["avgiftsendringer og uten energivarer"])
+            # Spesifikt søk for å forhindre feiltreff på "KPI-JE" / "uten energivarer"
+            jae_code = find_code(jae_grp_var, ["(kpi-jae)"])
             if not jae_code:
                 continue
                 
-            jae_m12_code = find_exact_code(jae_cnt_var, "12-måned", ["tolv", "12 mnd"]) or jae_cnt_var["values"][-1]
+            jae_m12_code = find_code(jae_cnt_var, ["12-måned", "tolv", "12 mnd"]) or jae_cnt_var["values"][-1]
             latest_tid_jae = jae_tid_var["values"][-1]
             
             q = {
@@ -126,7 +118,7 @@ def get_kpi_metrics():
                 yy = vals[0]
                 if not latest_tid:
                     latest_tid = latest_tid_jae
-                print(f"✅ Hentet YY (KPI-JAE) = {yy}% fra tabell {table_id}")
+                print(f"✅ Hentet YY={yy} fra tabell {table_id}")
                 break
         except Exception as e:
             print(f"⚠️ Kunne ikke hente KPI-JAE fra tabell {table_id}: {e}")
@@ -136,13 +128,17 @@ def get_kpi_metrics():
 def main():
     slack_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     if not slack_url:
-        print("❌ CRITICAL ERROR: Finner ikke SLACK_WEBHOOK_URL!")
+        print("❌ CRITICAL ERROR: Finner ikke SLACK_WEBHOOK_URL som miljøvariabel!")
         sys.exit(1)
 
     # 1. Hent tallene fra SSBs API
     try:
         xx, zz, yy, latest_tid = get_kpi_metrics()
-        print(f"✅ Suksess! KPI-tall for {latest_tid}: Total={xx}%, Matvarer={zz}%, KPI-JAE={yy}%")
+        
+        if not latest_tid:
+            raise ValueError("Klarte ikke hente gyldig periode (Tid) fra noen SSB-tabeller. API kan være nede eller endret.")
+            
+        print(f"✅ Hentet KPI-tall for {latest_tid}: Total={xx}%, Matvarer={zz}%, KPI-JAE={yy}%")
     except Exception as e:
         print(f"❌ Feil ved henting av KPI-tall fra API:")
         traceback.print_exc()
@@ -173,12 +169,12 @@ def main():
     except Exception as e:
         print(f"⚠️ RSS-lesing feilet: {e}")
 
-    # 4. Formater teksten til Slack nøyaktig som ønsket
+    # 4. Formater teksten til Slack
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
-        f"• SSB: Prisene steg med *{fmt_num(xx)}*% i forrige måned (siste 12 mnd)\n"
-        f"• Prisen på matvarer steg med *{fmt_num(zz)}*%\n"
-        f"• Kjerneinflasjonen (KPI-JAE) var på *{fmt_num(yy)}*%\n\n"
+        f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
+        f"• Matvarer (siste 12 mnd): *{fmt_num(zz)}%*\n"
+        f"• Kjerneinflasjon / KPI-JAE (siste 12 mnd): *{fmt_num(yy)}%*\n\n"
         f"👉 <{link}|Les hele rapporten hos SSB>"
     )
 
