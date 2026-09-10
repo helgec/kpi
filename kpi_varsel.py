@@ -44,23 +44,39 @@ def fmt_num(val):
     return str(val).replace('.', ',')
 
 def get_kpi_metrics():
-    """Henter KPI Total, Matvarer og KPI-JAE i én operasjon fra kildetabell 14704."""
-    print("🔍 Henter nøkkeltall fra Tabell 14704...")
-    meta = fetch_json("https://data.ssb.no/api/v0/no/table/14704")
+    """Henter KPI Total, Matvarer og KPI-JAE presist fra kildetabell 14704."""
+    table_id = "14704"
+    print(f"🔍 Henter meta fra Tabell {table_id}...")
+    meta = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
     vars_list = meta["variables"]
     
     cnt_var = next(v for v in vars_list if v["code"] == "ContentsCode")
     tid_var = next(v for v in vars_list if v["code"] == "Tid")
     grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
     
-    # Finn koder i Tabell 14704
-    total_code = find_code(grp_var, ["totalindeks", "i alt", "kpi total"]) or grp_var["values"][0]
-    mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "matvarer"]) or grp_var["values"][1]
-    jae_code = find_code(grp_var, ["(kpi-jae)", "kpi-jae"]) or grp_var["values"][-1]
-    
-    m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
+    # Finn koder ved å sjekke både selve koden (values) og beskrivelsen (valueTexts)
+    def locate_code(search_keywords):
+        for val, text in zip(grp_var.get("values", []), grp_var.get("valueTexts", [])):
+            val_lower = val.lower()
+            text_lower = text.lower()
+            for kw in search_keywords:
+                kw_lower = kw.lower()
+                if kw_lower == val_lower or kw_lower in text_lower:
+                    return val, text
+        return None, None
+
+    total_code, total_label = locate_code(["totalindeks", "kpi_total", "total"])
+    mat_code, mat_label = locate_code(["matvarer og alkoholfri", "matvarer og", "01"])
+    jae_code, jae_label = locate_code(["kpi-jae"])
+
+    m12_code = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
     latest_tid = tid_var["values"][-1]
-    
+
+    if not total_code or not mat_code or not jae_code:
+        raise ValueError(f"Kunne ikke identifisere koder i tabell {table_id}. Funnet: Total={total_code}, Mat={mat_code}, JAE={jae_code}")
+
+    print(f"📌 Fant koder i {table_id}: Total='{total_label}' ({total_code}), Mat='{mat_label}' ({mat_code}), JAE='{jae_label}' ({jae_code})")
+
     q = {
         "query": [
             {"code": grp_var["code"], "selection": {"filter": "item", "values": [total_code, mat_code, jae_code]}},
@@ -70,16 +86,17 @@ def get_kpi_metrics():
         "response": {"format": "json-stat2"}
     }
     
-    res = fetch_json("https://data.ssb.no/api/v0/no/table/14704", q)
-    vals = res.get("value", [])
+    res = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}", q)
     
-    xx, zz, yy = None, None, None
-    if len(vals) >= 3:
-        xx = vals[0]  # Total
-        zz = vals[1]  # Matvarer og alkoholfrie drikkevarer
-        yy = vals[2]  # KPI-JAE
-        print(f"✅ Hentet fra tabell 14704 ({latest_tid}): Total={xx}%, Mat={zz}%, KPI-JAE={yy}%")
-        
+    # Bruk JSON-stat2 sin egen indeks-ordbok for 100% presis kobling mellom kode og verdi
+    cat_index = res["dimension"][grp_var["code"]]["category"]["index"]
+    val_list = res.get("value", [])
+    
+    xx = val_list[cat_index[total_code]]
+    zz = val_list[cat_index[mat_code]]
+    yy = val_list[cat_index[jae_code]]
+
+    print(f"✅ Hentet fra tabell {table_id} ({latest_tid}): Total={xx}%, Mat={zz}%, KPI-JAE={yy}%")
     return xx, zz, yy, latest_tid
 
 def main():
