@@ -44,87 +44,42 @@ def fmt_num(val):
     return str(val).replace('.', ',')
 
 def get_kpi_metrics():
-    """Henter XX (KPI total), ZZ (Matvarer og alkoholfri drikke) og YY (KPI-JAE) fra tabeller."""
-    xx, zz, yy, latest_tid = None, None, None, None
+    """Henter KPI Total, Matvarer og KPI-JAE i én operasjon fra kildetabell 14704."""
+    print("🔍 Henter nøkkeltall fra Tabell 14704...")
+    meta = fetch_json("https://data.ssb.no/api/v0/no/table/14704")
+    vars_list = meta["variables"]
     
-    # 1. Hent XX (Total) og ZZ (Matvarer og alkoholfri drikke) fra Tabell 14700 / 08183
-    tables_main = ["14700", "08183"]
-    for table_id in tables_main:
-        try:
-            print(f"🔍 Prøver tabell {table_id} for KPI Total og Matvarer...")
-            meta = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
-            vars_list = meta["variables"]
-            
-            cnt_var = next(v for v in vars_list if v["code"] == "ContentsCode")
-            tid_var = next(v for v in vars_list if v["code"] == "Tid")
-            grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
-            
-            # Bruker eksakte koder: "00" er alltid Total, "01" er alltid Mat & alkoholfri drikke
-            total_code = "00" if "00" in grp_var["values"] else (find_code(grp_var, ["total"]) or grp_var["values"][0])
-            mat_code = "01" if "01" in grp_var["values"] else (find_code(grp_var, ["matvarer"]) or grp_var["values"][1])
-            
-            m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
-            latest_tid = tid_var["values"][-1]
-            
-            q = {
-                "query": [
-                    {"code": grp_var["code"], "selection": {"filter": "item", "values": [total_code, mat_code]}},
-                    {"code": cnt_var["code"], "selection": {"filter": "item", "values": [m12_code]}},
-                    {"code": tid_var["code"], "selection": {"filter": "item", "values": [latest_tid]}}
-                ],
-                "response": {"format": "json-stat2"}
-            }
-            
-            res = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}", q)
-            vals = res.get("value", [])
-            if len(vals) >= 2:
-                xx = vals[0]  # Total
-                zz = vals[1]  # Matvarer og alkoholfri drikke (Hovedgruppe 01)
-                print(f"✅ Hentet XX={xx} og ZZ={zz} fra tabell {table_id} ({latest_tid})")
-                break
-        except Exception as e:
-            print(f"⚠️ Kunne ikke hente fra tabell {table_id}: {e}")
-
-    # 2. Hent YY (KPI-JAE) fra Tabell 14706 / 14708 / 14704 / 08184
-    tables_jae = ["14706", "14708", "14704", "08184"]
-    for table_id in tables_jae:
-        try:
-            print(f"🔍 Prøver tabell {table_id} for KPI-JAE...")
-            meta = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
-            vars_list = meta["variables"]
-            
-            jae_cnt_var = next(v for v in vars_list if v["code"] == "ContentsCode")
-            jae_tid_var = next(v for v in vars_list if v["code"] == "Tid")
-            jae_grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
-            
-            # Eksakt søk på "(kpi-jae)" for å unngå feiltreff på "KPI-JE"
-            jae_code = find_code(jae_grp_var, ["(kpi-jae)"])
-            if not jae_code:
-                continue
-                
-            jae_m12_code = find_code(jae_cnt_var, ["12-måned", "tolv", "12 mnd"]) or jae_cnt_var["values"][-1]
-            latest_tid_jae = jae_tid_var["values"][-1]
-            
-            q = {
-                "query": [
-                    {"code": jae_grp_var["code"], "selection": {"filter": "item", "values": [jae_code]}},
-                    {"code": jae_cnt_var["code"], "selection": {"filter": "item", "values": [jae_m12_code]}},
-                    {"code": jae_tid_var["code"], "selection": {"filter": "item", "values": [latest_tid_jae]}}
-                ],
-                "response": {"format": "json-stat2"}
-            }
-            
-            res = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}", q)
-            vals = res.get("value", [])
-            if vals and vals[0] is not None:
-                yy = vals[0]
-                if not latest_tid:
-                    latest_tid = latest_tid_jae
-                print(f"✅ Hentet YY={yy} fra tabell {table_id}")
-                break
-        except Exception as e:
-            print(f"⚠️ Kunne ikke hente KPI-JAE fra tabell {table_id}: {e}")
-
+    cnt_var = next(v for v in vars_list if v["code"] == "ContentsCode")
+    tid_var = next(v for v in vars_list if v["code"] == "Tid")
+    grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
+    
+    # Finn koder i Tabell 14704
+    total_code = find_code(grp_var, ["totalindeks", "i alt", "kpi total"]) or grp_var["values"][0]
+    mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "matvarer"]) or grp_var["values"][1]
+    jae_code = find_code(grp_var, ["(kpi-jae)", "kpi-jae"]) or grp_var["values"][-1]
+    
+    m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
+    latest_tid = tid_var["values"][-1]
+    
+    q = {
+        "query": [
+            {"code": grp_var["code"], "selection": {"filter": "item", "values": [total_code, mat_code, jae_code]}},
+            {"code": cnt_var["code"], "selection": {"filter": "item", "values": [m12_code]}},
+            {"code": tid_var["code"], "selection": {"filter": "item", "values": [latest_tid]}}
+        ],
+        "response": {"format": "json-stat2"}
+    }
+    
+    res = fetch_json("https://data.ssb.no/api/v0/no/table/14704", q)
+    vals = res.get("value", [])
+    
+    xx, zz, yy = None, None, None
+    if len(vals) >= 3:
+        xx = vals[0]  # Total
+        zz = vals[1]  # Matvarer og alkoholfrie drikkevarer
+        yy = vals[2]  # KPI-JAE
+        print(f"✅ Hentet fra tabell 14704 ({latest_tid}): Total={xx}%, Mat={zz}%, KPI-JAE={yy}%")
+        
     return xx, zz, yy, latest_tid
 
 def main():
@@ -137,10 +92,9 @@ def main():
     try:
         xx, zz, yy, latest_tid = get_kpi_metrics()
         
-        if not latest_tid:
-            raise ValueError("Klarte ikke hente gyldig periode (Tid) fra noen SSB-tabeller.")
+        if not latest_tid or xx is None or zz is None or yy is None:
+            raise ValueError("Klarte ikke hente alle tre nøkkeltallene fra tabell 14704.")
             
-        print(f"✅ Hentet KPI-tall for {latest_tid}: Total={xx}%, Mat/drikke={zz}%, KPI-JAE={yy}%")
     except Exception as e:
         print(f"❌ Feil ved henting av KPI-tall fra API:")
         traceback.print_exc()
@@ -175,7 +129,7 @@ def main():
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
         f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
-        f"• Mat og alkoholfri drikke (siste 12 mnd): *{fmt_num(zz)}%*\n"
+        f"• Matvarer og alkoholfri drikke (siste 12 mnd): *{fmt_num(zz)}%*\n"
         f"• Kjerneinflasjon / KPI-JAE (siste 12 mnd): *{fmt_num(yy)}%*\n\n"
         f"👉 <{link}|Les hele rapporten hos SSB>"
     )
