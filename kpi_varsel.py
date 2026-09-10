@@ -60,7 +60,7 @@ def get_kpi_metrics():
             grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
             total_code = find_code(grp_var, ["00 i alt", "i alt", "total"]) or grp_var["values"][0]
-            mat_code = find_code(grp_var, ["01 matvarer", "matvarer"]) or grp_var["values"][1]
+            mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "01 matvarer og"]) or find_code(grp_var, ["01 matvarer", "matvarer"]) or grp_var["values"][1]
             m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
             latest_tid = tid_var["values"][-1]
             
