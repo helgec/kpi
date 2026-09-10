@@ -44,10 +44,10 @@ def fmt_num(val):
     return str(val).replace('.', ',')
 
 def get_kpi_metrics():
-    """Henter XX (KPI total), ZZ (Matvarer) og YY (KPI-JAE) fra tabeller."""
+    """Henter XX (KPI total), ZZ (Matvarer/drikke) og YY (KPI-JAE) fra tabeller."""
     xx, zz, yy, latest_tid = None, None, None, None
     
-    # 1. Hent XX (Total) og ZZ (Matvarer) fra Tabell 14700 (erstatter 08183)
+    # 1. Hent XX (Total) og ZZ (Matvarer og alkoholfrie drikkevarer) fra Tabell 14700 / 08183
     tables_main = ["14700", "08183"]
     for table_id in tables_main:
         try:
@@ -59,8 +59,11 @@ def get_kpi_metrics():
             tid_var = next(v for v in vars_list if v["code"] == "Tid")
             grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
-            total_code = find_code(grp_var, ["00 i alt", "i alt", "total"]) or grp_var["values"][0]
-            mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "01 matvarer og"]) or find_code(grp_var, ["01 matvarer", "matvarer"]) or grp_var["values"][1]
+            total_code = find_code(grp_var, ["00 totalindeks", "00 i alt", "totalindeks"]) or "00"
+            
+            # Presist søk for å treffe 01 (Matvarer og alkoholfrie) og IKKE 01.1 (Kun mat)
+            mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "01 matvarer og"]) or "01"
+            
             m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
             latest_tid = tid_var["values"][-1]
             
@@ -77,7 +80,7 @@ def get_kpi_metrics():
             vals = res.get("value", [])
             if len(vals) >= 2:
                 xx = vals[0]  # Total
-                zz = vals[1]  # Matvarer
+                zz = vals[1]  # Matvarer og alkoholfrie drikkevarer
                 print(f"✅ Hentet XX={xx} og ZZ={zz} fra tabell {table_id} ({latest_tid})")
                 break
         except Exception as e:
@@ -95,7 +98,7 @@ def get_kpi_metrics():
             jae_tid_var = next(v for v in vars_list if v["code"] == "Tid")
             jae_grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
-            # Spesifikt søk for å forhindre feiltreff på "KPI-JE" / "uten energivarer"
+            # Eksakt søk på "(kpi-jae)" for å unngå feiltreff på "KPI-JE"
             jae_code = find_code(jae_grp_var, ["(kpi-jae)"])
             if not jae_code:
                 continue
@@ -136,9 +139,9 @@ def main():
         xx, zz, yy, latest_tid = get_kpi_metrics()
         
         if not latest_tid:
-            raise ValueError("Klarte ikke hente gyldig periode (Tid) fra noen SSB-tabeller. API kan være nede eller endret.")
+            raise ValueError("Klarte ikke hente gyldig periode (Tid) fra noen SSB-tabeller.")
             
-        print(f"✅ Hentet KPI-tall for {latest_tid}: Total={xx}%, Matvarer={zz}%, KPI-JAE={yy}%")
+        print(f"✅ Hentet KPI-tall for {latest_tid}: Total={xx}%, Mat/drikke={zz}%, KPI-JAE={yy}%")
     except Exception as e:
         print(f"❌ Feil ved henting av KPI-tall fra API:")
         traceback.print_exc()
@@ -173,7 +176,7 @@ def main():
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
         f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
-        f"• Matvarer (siste 12 mnd): *{fmt_num(zz)}%*\n"
+        f"• Mat og alkoholfri drikke (siste 12 mnd): *{fmt_num(zz)}%*\n"
         f"• Kjerneinflasjon / KPI-JAE (siste 12 mnd): *{fmt_num(yy)}%*\n\n"
         f"👉 <{link}|Les hele rapporten hos SSB>"
     )
