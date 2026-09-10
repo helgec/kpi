@@ -210,7 +210,7 @@ def main():
     news_text = (
         f"Prisene {verb_word(xx)} med {abs_fmt(xx)} % siste tolv måneder, viser tall fra SSB. "
         f"Prisen på matvarer {verb_word(zz)} med {abs_fmt(zz)} % i samme periode. "
-        f"Fra {prev_m} til {curr_m} {verb_word(zz_mnd)} prisene med {abs_fmt(zz_mnd)} %. "
+        f"Fra {prev_m} til {curr_m} {verb_word(zz_mnd)} matvareprisene med {abs_fmt(zz_mnd)} %. "
         f"Kjerneinflasjonen siste 12 måneder var {fmt_num(yy)} prosent."
     )
 
