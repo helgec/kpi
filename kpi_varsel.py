@@ -11,6 +11,24 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(SCRIPT_DIR, "last_seen_kpi.txt")
 RSS_URL = "https://www.ssb.no/rss/kpi"
 
+MONTH_NAMES = {
+    1: "januar", 2: "februar", 3: "mars", 4: "april",
+    5: "mai", 6: "juni", 7: "juli", 8: "august",
+    9: "september", 10: "oktober", 11: "november", 12: "desember"
+}
+
+def parse_months(tid_str):
+    """Konverterer f.eks. '2026M08' til ('juli', 'august')."""
+    try:
+        if "M" in tid_str:
+            _, month_part = tid_str.split("M")
+            m_curr = int(month_part)
+            m_prev = 12 if m_curr == 1 else m_curr - 1
+            return MONTH_NAMES[m_prev], MONTH_NAMES[m_curr]
+    except Exception:
+        pass
+    return "forrige måned", "denne måned"
+
 def fetch_json(url, data=None):
     """Hjelpefunksjon for å hente JSON fra SSB API."""
     headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
@@ -43,6 +61,14 @@ def fmt_num(val):
         return f"{val:.1f}".replace('.', ',')
     return str(val).replace('.', ',')
 
+def verb_word(val):
+    """Returnerer 'sank' for negative tall, ellers 'steg'."""
+    return "sank" if (isinstance(val, (int, float)) and val < 0) else "steg"
+
+def abs_fmt(val):
+    """Returnerer absoluttverdi formatert (f.eks. -0.5 -> 0,5)."""
+    return fmt_num(abs(val)) if isinstance(val, (int, float)) else fmt_num(val)
+
 def get_kpi_metrics():
     """
     Henter KPI-tall fra SSBs API:
@@ -65,7 +91,6 @@ def get_kpi_metrics():
         total_code = "00" if "00" in grp_var["values"] else grp_var["values"][0]
         mat_code = "01.1" if "01.1" in grp_var["values"] else (find_code(grp_var, ["01.1", "matvarer"]) or "01.1")
         
-        # Finn koder for 12-månedersendring og månedsendring
         m12_code = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
         m1_code = find_code(cnt_var, ["månedsendring", "mnd-endring", "måned", "1-måned"]) or cnt_var["values"][1]
         
@@ -87,7 +112,6 @@ def get_kpi_metrics():
 
         num_cnt = len(cat_idx_cnt)
         
-        # Matematisk utregning av indeks i flat JSON-stat2 matrise: (grp_idx * num_cnt) + cnt_idx
         xx = vals_14700[cat_idx_grp[total_code] * num_cnt + cat_idx_cnt[m12_code]]
         zz = vals_14700[cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m12_code]]
         zz_mnd = vals_14700[cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m1_code]]
@@ -181,8 +205,18 @@ def main():
         print(f"⚠️ RSS-lesing feilet: {e}")
 
     # 4. Formater teksten til Slack
+    prev_m, curr_m = parse_months(latest_tid)
+
+    news_text = (
+        f"Prisene {verb_word(xx)} med {abs_fmt(xx)} % siste tolv måneder. "
+        f"Prisen på matvarer {verb_word(zz)} med {abs_fmt(zz)} % i samme periode. "
+        f"Fra {prev_m} til {curr_m} {verb_word(zz_mnd)} prisene med {abs_fmt(zz_mnd)} %. "
+        f"Kjerneinflasjonen siste 12 måneder var {fmt_num(yy)} prosent."
+    )
+
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
+        f"{news_text}\n\n"
         f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
         f"• Matvarer (siste 12 mnd): *{fmt_num(zz)}%*\n"
         f"• Matvarer (fra forrige måned): *{fmt_num(zz_mnd)}%*\n"
