@@ -44,10 +44,10 @@ def fmt_num(val):
     return str(val).replace('.', ',')
 
 def get_kpi_metrics():
-    """Henter XX (KPI total), ZZ (Matvarer/drikke) og YY (KPI-JAE) fra tabeller."""
+    """Henter XX (KPI total), ZZ (Matvarer og alkoholfri drikke) og YY (KPI-JAE) fra tabeller."""
     xx, zz, yy, latest_tid = None, None, None, None
     
-    # 1. Hent XX (Total) og ZZ (Matvarer og alkoholfrie drikkevarer) fra Tabell 14700 / 08183
+    # 1. Hent XX (Total) og ZZ (Matvarer og alkoholfri drikke) fra Tabell 14700 / 08183
     tables_main = ["14700", "08183"]
     for table_id in tables_main:
         try:
@@ -59,10 +59,9 @@ def get_kpi_metrics():
             tid_var = next(v for v in vars_list if v["code"] == "Tid")
             grp_var = next(v for v in vars_list if v["code"] not in ["ContentsCode", "Tid"])
             
-            total_code = find_code(grp_var, ["00 totalindeks", "00 i alt", "totalindeks"]) or "00"
-            
-            # Presist søk for å treffe 01 (Matvarer og alkoholfrie) og IKKE 01.1 (Kun mat)
-            mat_code = find_code(grp_var, ["matvarer og alkoholfrie", "01 matvarer og"]) or "01"
+            # Bruker eksakte koder: "00" er alltid Total, "01" er alltid Mat & alkoholfri drikke
+            total_code = "00" if "00" in grp_var["values"] else (find_code(grp_var, ["total"]) or grp_var["values"][0])
+            mat_code = "01" if "01" in grp_var["values"] else (find_code(grp_var, ["matvarer"]) or grp_var["values"][1])
             
             m12_code = find_code(cnt_var, ["12-måned", "tolv", "12 mnd"]) or cnt_var["values"][-1]
             latest_tid = tid_var["values"][-1]
@@ -80,7 +79,7 @@ def get_kpi_metrics():
             vals = res.get("value", [])
             if len(vals) >= 2:
                 xx = vals[0]  # Total
-                zz = vals[1]  # Matvarer og alkoholfrie drikkevarer
+                zz = vals[1]  # Matvarer og alkoholfri drikke (Hovedgruppe 01)
                 print(f"✅ Hentet XX={xx} og ZZ={zz} fra tabell {table_id} ({latest_tid})")
                 break
         except Exception as e:
