@@ -46,12 +46,12 @@ def fmt_num(val):
 def get_kpi_metrics():
     """
     Henter KPI-tall fra SSBs API:
-    - Total (00) og Mat & alkoholfri drikke (01) fra Tabell 14700.
+    - Total (00) og Matvarer (01.1 - tallet mediene siterer) fra Tabell 14700.
     - KPI-JAE (kjerneinflasjon) fra Tabell 14706 / 14704.
     """
     xx, zz, yy, latest_tid = None, None, None, None
 
-    # 1. Hent KPI Total (00) og Matvarer og alkoholfri drikke (01) fra Tabell 14700
+    # 1. Hent KPI Total (00) og Matvarer (01.1) fra Tabell 14700
     try:
         print("🔍 Henter KPI Total og Matvarer fra Tabell 14700...")
         meta_14700 = fetch_json("https://data.ssb.no/api/v0/no/table/14700")
@@ -62,7 +62,8 @@ def get_kpi_metrics():
         grp_var = next(v for v in vars_14700 if v["code"] not in ["ContentsCode", "Tid"])
 
         total_code = "00" if "00" in grp_var["values"] else grp_var["values"][0]
-        mat_code = "01" if "01" in grp_var["values"] else grp_var["values"][1]
+        # Låst til 01.1 for å hente "Matvarer" (1,7 %) i stedet for 01 "Matvarer og alkoholfri drikke" (1,6 %)
+        mat_code = "01.1" if "01.1" in grp_var["values"] else (find_code(grp_var, ["01.1", "matvarer"]) or "01.1")
         
         m12_code = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
         latest_tid = tid_var["values"][-1]
@@ -82,7 +83,7 @@ def get_kpi_metrics():
 
         xx = vals_14700[cat_idx_14700[total_code]]
         zz = vals_14700[cat_idx_14700[mat_code]]
-        print(f"✅ Hentet fra 14700 ({latest_tid}): Total={xx}%, Mat/drikke={zz}%")
+        print(f"✅ Hentet fra 14700 ({latest_tid}): Total={xx}%, Matvarer (01.1)={zz}%")
     except Exception as e:
         print(f"⚠️ Feil ved henting fra 14700: {e}")
 
@@ -174,7 +175,7 @@ def main():
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
         f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
-        f"• Matvarer og alkoholfri drikke (siste 12 mnd): *{fmt_num(zz)}%*\n"
+        f"• Matvarer (siste 12 mnd): *{fmt_num(zz)}%*\n"
         f"• Kjerneinflasjon / KPI-JAE (siste 12 mnd): *{fmt_num(yy)}%*\n\n"
         f"👉 <{link}|Les hele rapporten hos SSB>"
     )
