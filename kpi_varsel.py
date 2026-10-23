@@ -277,7 +277,11 @@ def main():
         ):
             raise ValueError("Klarte ikke hente alle nøkkeltallene fra SSB.")
 
-        update_status("ssb_kpi", "SSB KPI-overvåker", status="OK")
+        siste_melding = (
+            f"{latest_tid}: KPI totalt {fmt_num(xx)}%, matvarer {fmt_num(zz)}%,"
+            f" KPI-JAE {fmt_num(yy)}%"
+        )
+        update_status("ssb_kpi", "SSB KPI-overvåker", status="OK", last_message=siste_melding)
 
     except Exception as e:
         err_msg = f"Feil ved henting av KPI-tall: {e}"
