@@ -1,38 +1,23 @@
-import json
 import os
 import sys
+import json
 import traceback
-import urllib.error
 import urllib.request
+import urllib.error
 import xml.etree.ElementTree as ET
 
-# Importer status-hjelperen
-sys.path.append("/home/nrknyheter")
-from status_helper import update_status
-
-# Sikrer at tilstandsfilen lagres i samme mappe som selve skriptet
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_FILE = os.path.join(SCRIPT_DIR, "last_seen_kpi.txt")
 RSS_URL = "https://www.ssb.no/rss/kpi"
 
 MONTH_NAMES = {
-    1: "januar",
-    2: "februar",
-    3: "mars",
-    4: "april",
-    5: "mai",
-    6: "juni",
-    7: "juli",
-    8: "august",
-    9: "september",
-    10: "oktober",
-    11: "november",
-    12: "desember",
+    1: "januar", 2: "februar", 3: "mars", 4: "april",
+    5: "mai", 6: "juni", 7: "juli", 8: "august",
+    9: "september", 10: "oktober", 11: "november", 12: "desember"
 }
 
-
 def parse_months(tid_str):
-    """Konverterer f.eks. '2026M08' til ('juli', 'august')."""
+    """Konverterer f.eks. '2026M10' til ('september', 'oktober')."""
     try:
         if "M" in tid_str:
             _, month_part = tid_str.split("M")
@@ -43,145 +28,92 @@ def parse_months(tid_str):
         pass
     return "forrige måned", "denne måned"
 
-
 def fetch_json(url, data=None):
-    """Hjelpefunksjon for å hente JSON fra SSB API."""
-    headers = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
+    headers = {'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0'}
     req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8") if data else None,
-        headers=headers,
+        url, 
+        data=json.dumps(data).encode('utf-8') if data else None, 
+        headers=headers
     )
     try:
         with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            return json.loads(resp.read().decode('utf-8'))
     except urllib.error.HTTPError as e:
-        err_body = e.read().decode("utf-8")
+        err_body = e.read().decode('utf-8')
         print(f"❌ HTTP Error {e.code} for URL {url}:\n{err_body}")
         raise
 
-
 def find_code(var, search_terms):
-    """Søker i valueTexts for en variabel og returnerer koden som matcher søkeordene."""
     for val, text in zip(var.get("values", []), var.get("valueTexts", [])):
         text_lower = text.lower()
         if any(term in text_lower for term in search_terms):
             return val
     return None
 
-
 def fmt_num(val):
-    """Formaterer tall til norsk format med komma (f.eks. 3.0 -> 3,0)."""
     if val is None:
         return "N/A"
     if isinstance(val, (int, float)):
-        return f"{val:.1f}".replace(".", ",")
-    return str(val).replace(".", ",")
+        return f"{val:.1f}".replace('.', ',')
+    return str(val).replace('.', ',')
 
-
-def verb_word(val):
-    """Returnerer 'sank' for negative tall, ellers 'steg'."""
-    return "sank" if (isinstance(val, (int, float)) and val < 0) else "steg"
-
-
-def abs_fmt(val):
-    """Returnerer absoluttverdi formatert (f.eks. -0.5 -> 0,5)."""
-    return fmt_num(abs(val)) if isinstance(val, (int, float)) else fmt_num(val)
-
+def format_change_text(val, subject_phrase="prisene"):
+    """Lager naturlig norsk tekst for endring (f.eks. 'steg med 0,4 %', 'falt med 0,4 %' eller 'var uendret')."""
+    if val is None:
+        return f"{subject_phrase} endret seg med N/A"
+    if isinstance(val, (int, float)):
+        if round(val, 1) == 0.0:
+            return f"var {subject_phrase} uendret"
+        elif val < 0:
+            return f"falt {subject_phrase} med {fmt_num(abs(val))} %"
+        else:
+            return f"steg {subject_phrase} med {fmt_num(val)} %"
+    return f"{subject_phrase} endret seg med {val} %"
 
 def get_kpi_metrics():
-    """
-    Henter KPI-tall fra SSBs API:
-    - Total (00) 12-mnd vekst fra Tabell 14700.
-    - Matvarer (01.1) 12-mnd vekst OG månedsendring fra Tabell 14700.
-    - KPI-JAE (kjerneinflasjon) 12-mnd vekst fra Tabell 14706 / 14704.
-    """
     xx, zz, zz_mnd, yy, latest_tid = None, None, None, None, None
 
-    # 1. Hent KPI Total (00) og Matvarer (01.1) fra Tabell 14700
+    # 1. Hent KPI Total (00) og Matvarer og alkoholfrie drikkevarer (01) fra Tabell 14700
     try:
-        print(
-            "🔍 Henter KPI Total og Matvarer (12mnd + mnd-endring) fra Tabell"
-            " 14700..."
-        )
+        print("🔍 Henter KPI Total og Mat/drikke fra Tabell 14700...")
         meta_14700 = fetch_json("https://data.ssb.no/api/v0/no/table/14700")
         vars_14700 = meta_14700["variables"]
-
+        
         cnt_var = next(v for v in vars_14700 if v["code"] == "ContentsCode")
         tid_var = next(v for v in vars_14700 if v["code"] == "Tid")
-        grp_var = next(
-            v for v in vars_14700 if v["code"] not in ["ContentsCode", "Tid"]
-        )
+        grp_var = next(v for v in vars_14700 if v["code"] not in ["ContentsCode", "Tid"])
 
-        total_code = (
-            "00" if "00" in grp_var["values"] else grp_var["values"][0]
-        )
-        mat_code = (
-            "01.1"
-            if "01.1" in grp_var["values"]
-            else (find_code(grp_var, ["01.1", "matvarer"]) or "01.1")
-        )
-
-        m12_code = find_code(
-            cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]
-        ) or cnt_var["values"][-1]
-        m1_code = find_code(
-            cnt_var, ["månedsendring", "mnd-endring", "måned", "1-måned"]
-        ) or cnt_var["values"][1]
-
+        total_code = "00" if "00" in grp_var["values"] else grp_var["values"][0]
+        
+        # Bruker hovedgruppe 01 (Matvarer og alkoholfrie drikkevarer) som matcher SSBs offisielle tabell
+        mat_code = "01" if "01" in grp_var["values"] else (find_code(grp_var, ["matvarer og alkoholfri", "01"]) or grp_var["values"][1])
+        
+        m12_code = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
+        m1_code = find_code(cnt_var, ["månedsendring", "mnd-endring", "måned", "1-måned"]) or cnt_var["values"][1]
+        
         latest_tid = tid_var["values"][-1]
 
         q_14700 = {
             "query": [
-                {
-                    "code": grp_var["code"],
-                    "selection": {
-                        "filter": "item",
-                        "values": [total_code, mat_code],
-                    },
-                },
-                {
-                    "code": cnt_var["code"],
-                    "selection": {
-                        "filter": "item",
-                        "values": [m12_code, m1_code],
-                    },
-                },
-                {
-                    "code": tid_var["code"],
-                    "selection": {"filter": "item", "values": [latest_tid]},
-                },
+                {"code": grp_var["code"], "selection": {"filter": "item", "values": [total_code, mat_code]}},
+                {"code": cnt_var["code"], "selection": {"filter": "item", "values": [m12_code, m1_code]}},
+                {"code": tid_var["code"], "selection": {"filter": "item", "values": [latest_tid]}}
             ],
-            "response": {"format": "json-stat2"},
+            "response": {"format": "json-stat2"}
         }
 
-        res_14700 = fetch_json(
-            "https://data.ssb.no/api/v0/no/table/14700", q_14700
-        )
-        cat_idx_grp = res_14700["dimension"][grp_var["code"]]["category"][
-            "index"
-        ]
-        cat_idx_cnt = res_14700["dimension"][cnt_var["code"]]["category"][
-            "index"
-        ]
+        res_14700 = fetch_json("https://data.ssb.no/api/v0/no/table/14700", q_14700)
+        cat_idx_grp = res_14700["dimension"][grp_var["code"]]["category"]["index"]
+        cat_idx_cnt = res_14700["dimension"][cnt_var["code"]]["category"]["index"]
         vals_14700 = res_14700.get("value", [])
 
         num_cnt = len(cat_idx_cnt)
+        
+        xx = vals_14700[cat_idx_grp[total_code] * num_cnt + cat_idx_cnt[m12_code]]
+        zz = vals_14700[cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m12_code]]
+        zz_mnd = vals_14700[cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m1_code]]
 
-        xx = vals_14700[
-            cat_idx_grp[total_code] * num_cnt + cat_idx_cnt[m12_code]
-        ]
-        zz = vals_14700[
-            cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m12_code]
-        ]
-        zz_mnd = vals_14700[
-            cat_idx_grp[mat_code] * num_cnt + cat_idx_cnt[m1_code]
-        ]
-
-        print(
-            f"✅ Hentet fra 14700 ({latest_tid}): Total 12m={xx}%, Matvarer"
-            f" 12m={zz}%, Matvarer mnd={zz_mnd}%"
-        )
+        print(f"✅ Hentet fra 14700 ({latest_tid}): Total={xx}%, Mat/drikke 12m={zz}%, Mat/drikke mnd={zz_mnd}%")
     except Exception as e:
         print(f"⚠️ Feil ved henting fra 14700: {e}")
 
@@ -189,53 +121,31 @@ def get_kpi_metrics():
     for table_id in ["14706", "14704"]:
         try:
             print(f"🔍 Henter KPI-JAE fra Tabell {table_id}...")
-            meta_jae = fetch_json(
-                f"https://data.ssb.no/api/v0/no/table/{table_id}"
-            )
+            meta_jae = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}")
             vars_jae = meta_jae["variables"]
 
             cnt_var = next(v for v in vars_jae if v["code"] == "ContentsCode")
             tid_var = next(v for v in vars_jae if v["code"] == "Tid")
-            grp_var = next(
-                v for v in vars_jae if v["code"] not in ["ContentsCode", "Tid"]
-            )
+            grp_var = next(v for v in vars_jae if v["code"] not in ["ContentsCode", "Tid"])
 
             jae_code = find_code(grp_var, ["(kpi-jae)", "kpi-jae"])
             if not jae_code:
                 continue
 
-            jae_m12 = find_code(
-                cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]
-            ) or cnt_var["values"][-1]
+            jae_m12 = find_code(cnt_var, ["12-måned", "endringaar", "tolv", "12 mnd"]) or cnt_var["values"][-1]
             latest_tid_jae = tid_var["values"][-1]
 
             q_jae = {
                 "query": [
-                    {
-                        "code": grp_var["code"],
-                        "selection": {"filter": "item", "values": [jae_code]},
-                    },
-                    {
-                        "code": cnt_var["code"],
-                        "selection": {"filter": "item", "values": [jae_m12]},
-                    },
-                    {
-                        "code": tid_var["code"],
-                        "selection": {
-                            "filter": "item",
-                            "values": [latest_tid_jae],
-                        },
-                    },
+                    {"code": grp_var["code"], "selection": {"filter": "item", "values": [jae_code]}},
+                    {"code": cnt_var["code"], "selection": {"filter": "item", "values": [jae_m12]}},
+                    {"code": tid_var["code"], "selection": {"filter": "item", "values": [latest_tid_jae]}}
                 ],
-                "response": {"format": "json-stat2"},
+                "response": {"format": "json-stat2"}
             }
 
-            res_jae = fetch_json(
-                f"https://data.ssb.no/api/v0/no/table/{table_id}", q_jae
-            )
-            cat_idx_jae = res_jae["dimension"][grp_var["code"]]["category"][
-                "index"
-            ]
+            res_jae = fetch_json(f"https://data.ssb.no/api/v0/no/table/{table_id}", q_jae)
+            cat_idx_jae = res_jae["dimension"][grp_var["code"]]["category"]["index"]
             vals_jae = res_jae.get("value", [])
 
             yy = vals_jae[cat_idx_jae[jae_code]]
@@ -248,113 +158,77 @@ def get_kpi_metrics():
 
     return xx, zz, zz_mnd, yy, latest_tid
 
-
 def main():
     slack_url = os.environ.get("SLACK_WEBHOOK_URL", "").strip()
     if not slack_url:
-        print(
-            "❌ CRITICAL ERROR: Finner ikke SLACK_WEBHOOK_URL som"
-            " miljøvariabel!"
-        )
-        update_status(
-            "ssb_kpi",
-            "SSB KPI-overvåker",
-            status="ERROR",
-            error_msg="Mangler SLACK_WEBHOOK_URL",
-        )
+        print("❌ CRITICAL ERROR: Finner ikke SLACK_WEBHOOK_URL som miljøvariabel!")
         sys.exit(1)
 
-    # 1. Hent tallene fra SSBs API
     try:
         xx, zz, zz_mnd, yy, latest_tid = get_kpi_metrics()
-
-        if (
-            not latest_tid
-            or xx is None
-            or zz is None
-            or zz_mnd is None
-            or yy is None
-        ):
+        
+        if not latest_tid or xx is None or zz is None or zz_mnd is None or yy is None:
             raise ValueError("Klarte ikke hente alle nøkkeltallene fra SSB.")
-
-        siste_melding = (
-            f"{latest_tid}: KPI totalt {fmt_num(xx)}%, matvarer {fmt_num(zz)}%,"
-            f" KPI-JAE {fmt_num(yy)}%"
-        )
-        update_status("ssb_kpi", "SSB KPI-overvåker", status="OK", last_message=siste_melding)
-
+            
     except Exception as e:
-        err_msg = f"Feil ved henting av KPI-tall: {e}"
-        print(f"❌ {err_msg}")
+        print("❌ Feil ved henting av KPI-tall fra API:")
         traceback.print_exc()
-        update_status(
-            "ssb_kpi", "SSB KPI-overvåker", status="ERROR", error_msg=err_msg
-        )
         sys.exit(1)
 
-    # 2. Sjekk om denne perioden allerede er varslet
     last_seen = ""
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             last_seen = f.read().strip()
 
     if latest_tid == last_seen:
-        print(
-            f"ℹ️ Ingen nye KPI-tall siden sist (sist varslet: '{last_seen}')."
-            " Avslutter uten å sende til Slack."
-        )
+        print(f"ℹ️ Ingen nye KPI-tall siden sist (sist varslet: '{last_seen}'). Avslutter.")
         sys.exit(0)
 
-    print(
-        f"🆕 Ny KPI-periode oppdaget! (Gammel: '{last_seen}', Ny:"
-        f" '{latest_tid}')"
-    )
+    print(f"🆕 Ny KPI-periode oppdaget! (Gammel: '{last_seen}', Ny: '{latest_tid}')")
 
-    # 3. Hent lenke fra RSS-feed
-    link = (
-        "https://www.ssb.no/priser-og-prisindekser/konsumpriser/statistikk/konsumprisindeksen"
-    )
+    link = "https://www.ssb.no/priser-og-prisindekser/konsumpriser/statistikk/konsumprisindeksen"
     try:
-        req = urllib.request.Request(
-            RSS_URL, headers={"User-Agent": "Mozilla/5.0"}
-        )
+        req = urllib.request.Request(RSS_URL, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req) as response:
             xml_data = response.read()
         root = ET.fromstring(xml_data)
-        item = root.find(".//item")
+        item = root.find('.//item')
         if item is not None:
-            link = item.findtext("link", link).strip()
+            link = item.findtext('link', link).strip()
     except Exception as e:
         print(f"⚠️ RSS-lesing feilet: {e}")
 
-    # 4. Formater teksten til Slack
     prev_m, curr_m = parse_months(latest_tid)
 
+    total_change = format_change_text(xx, "prisene")
+    mat_12_change = format_change_text(zz, "prisen på mat og alkoholfri drikke")
+    mat_mnd_change = format_change_text(zz_mnd, "prisene")
+
     news_text = (
-        f"Prisene {verb_word(xx)} med {abs_fmt(xx)} % siste tolv måneder, viser"
-        f" tall fra SSB. Prisen på matvarer {verb_word(zz)} med {abs_fmt(zz)} % i"
-        f" samme periode. Fra {prev_m} til {curr_m} {verb_word(zz_mnd)}"
-        f" matvareprisene med {abs_fmt(zz_mnd)} %. Kjerneinflasjonen siste 12"
-        f" måneder var {fmt_num(yy)} prosent."
+        f"{total_change.capitalize()} siste tolv måneder. "
+        f"{mat_12_change.capitalize()} i samme periode. "
+        f"Fra {prev_m} til {curr_m} {mat_mnd_change}. "
+        f"Kjerneinflasjonen siste 12 måneder var {fmt_num(yy)} prosent."
     )
 
     slack_text = (
         f"📈 *Nye tall fra SSB: Konsumprisindeksen ({latest_tid})*\n\n"
         f"{news_text}\n\n"
         f"• KPI Total (siste 12 mnd): *{fmt_num(xx)}%*\n"
-        f"• Matvarer (siste 12 mnd): *{fmt_num(zz)}%*\n"
-        f"• Matvarer (fra forrige måned): *{fmt_num(zz_mnd)}%*\n"
+        f"• Mat og alkoholfri drikke (siste 12 mnd): *{fmt_num(zz)}%*\n"
+        f"• Mat og alkoholfri drikke (fra forrige måned): *{fmt_num(zz_mnd)}%*\n"
         f"• Kjerneinflasjon / KPI-JAE (siste 12 mnd): *{fmt_num(yy)}%*\n\n"
         f"👉 <{link}|Les hele rapporten hos SSB>"
     )
 
-    # 5. Send meldingen til Slack
     print("📤 Sender melding til Slack...")
-    payload = json.dumps({"text": slack_text}).encode("utf-8")
+    payload = json.dumps({"text": slack_text}).encode('utf-8')
     slack_req = urllib.request.Request(
-        slack_url, data=payload, headers={"Content-Type": "application/json"}
+        slack_url,
+        data=payload,
+        headers={'Content-Type': 'application/json'}
     )
-
+    
     try:
         with urllib.request.urlopen(slack_req) as response:
             if response.status in (200, 204):
@@ -362,23 +236,11 @@ def main():
                 with open(STATE_FILE, "w") as f:
                     f.write(latest_tid)
             else:
-                err_msg = f"Slack returnerte HTTP status: {response.status}"
-                print(f"❌ {err_msg}")
-                update_status(
-                    "ssb_kpi",
-                    "SSB KPI-overvåker",
-                    status="ERROR",
-                    error_msg=err_msg,
-                )
+                print(f"❌ Slack returnerte HTTP status: {response.status}")
                 sys.exit(1)
     except Exception as e:
-        err_msg = f"Feil ved sending til Slack: {e}"
-        print(f"❌ {err_msg}")
-        update_status(
-            "ssb_kpi", "SSB KPI-overvåker", status="ERROR", error_msg=err_msg
-        )
+        print(f"❌ Feil ved sending til Slack: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
